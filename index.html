@@ -29,6 +29,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 /* 上方小工具列 */
 .hud{position:absolute;z-index:30;top:calc(env(safe-area-inset-top,0px) + 10px);left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));display:flex;justify-content:space-between;align-items:center;pointer-events:none}
 .hud>*{pointer-events:auto}
+.sound.armed{background:var(--cinnabar);border-color:var(--cinnabar);color:#fff}
 .sound{background:rgba(14,11,15,.6);border:1px solid rgba(201,162,75,.45);color:var(--paper-2);font-size:12px;padding:5px 10px;border-radius:999px;letter-spacing:.05em}
 .bless{display:flex;align-items:center;gap:6px;background:rgba(14,11,15,.65);border:1px solid rgba(201,162,75,.45);color:var(--gold);font-size:12px;padding:4px 10px 4px 8px;border-radius:999px}
 .bless .sticks{display:flex;gap:3px;align-items:flex-end;height:16px}
@@ -148,7 +149,7 @@ canvas.fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z
 
 <div class="app" id="app">
   <div class="hud">
-    <button class="sound" id="soundBtn" type="button" aria-pressed="true">聲音 開</button>
+    <div style="display:flex;gap:8px"><button class="sound" id="soundBtn" type="button" aria-pressed="true">聲音 開</button><button class="sound" id="restartBtn" type="button" hidden>從頭開始</button></div>
     <div class="bless" id="bless" hidden><span>神明保佑</span><span class="sticks" id="sticks"></span></div>
   </div>
 
@@ -172,6 +173,13 @@ canvas.fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z
       <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="16" y="4" width="32" height="56" rx="6" fill="#241a13"/><rect x="19" y="10" width="26" height="42" rx="2" fill="#efe4cb"/><rect x="24" y="20" width="16" height="16" rx="3" fill="#fff" stroke="#241a13" stroke-width="2"/><circle cx="32" cy="28" r="3" fill="#b3261e"/><path d="M22 44c4-6 10-6 13 0-4-2-9-2-13 0z" fill="#b3261e"/></svg>
       <div><b>在手機上擲</b><span>沒帶骰子也能玩。點一下就擲筊、擲骰子，手機直接判定成功或失敗。</span></div>
     </button>
+  </section>
+
+  <section class="modesel" id="resumeSel" hidden>
+    <h2>密函已經拆開過</h2>
+    <p class="lead" id="resumeInfo">上次看到這裡</p>
+    <button class="mode" id="resumeGo" type="button"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M20 12l28 20-28 20z" fill="#b3261e"/></svg><div><b>接著看</b><span id="resumeWhere">回到上次停下的那一幕。</span></div></button>
+    <button class="mode" id="resumeNew" type="button"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="18" fill="none" stroke="#241a13" stroke-width="5"/><path d="M32 6v14l10-7z" fill="#241a13"/></svg><div><b>重新拆一封</b><span>新的一局。回到封面，從第一幕開始。</span></div></button>
   </section>
 
   <div class="flash" id="flash"></div>
@@ -198,8 +206,9 @@ let state = { scene: null, bless: 0, jiao: [] };
 let current = null;
 
 /* ---------- 存檔（螢幕關掉或重新整理也能接著看） ---------- */
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
-function load(){ try{ const s = JSON.parse(localStorage.getItem(KEY)); if(s && s.scene) return s; }catch(e){} return null; }
+function save(){ try{ state.t = Date.now(); localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+const EXPIRE = 6*60*60*1000; // 6 小時沒動就當作新的一局
+function load(){ try{ const s = JSON.parse(localStorage.getItem(KEY)); if(s && s.scene){ if(!s.t || Date.now()-s.t > EXPIRE){ clearSave(); return null; } return s; } }catch(e){} return null; }
 function clearSave(){ try{ localStorage.removeItem(KEY); }catch(e){} }
 
 /* ---------- 聲音（WebAudio 合成，不用音檔） ---------- */
@@ -345,7 +354,7 @@ document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click'
 
 /* ---------- 劇情 ---------- */
 function go(id){
-  state.scene = id; save();
+  state.scene = id; save(); $('#restartBtn').hidden = false;
   const sc = SCENES[id] || QUIT;
   const old = current;
   const el = document.createElement('section');
@@ -577,12 +586,25 @@ function endFx(win, el){
 }
 
 /* ---------- 開始：有存檔就接著看 ---------- */
+function restart(){ clearSave(); if(canSpeak()) speechSynthesis.cancel(); location.reload(); }
 const saved = load();
 if(saved){
-  state = saved; if(!state.mode) state.mode = 'table';
+  const sc = SCENES[saved.scene] || QUIT;
   $('#cover').hidden = true;
-  go(saved.scene === 'a2' ? 'a2' : saved.scene);
+  const r = $('#resumeSel'); r.hidden = false; r.classList.add('show');
+  $('#resumeWhere').textContent = `回到${sc.act ? sc.act+'《'+sc.name+'》' : '《'+sc.name+'》'}${saved.jiaoDone ? '，神明保佑還剩 '+saved.bless+' 個' : ''}。`;
+  $('#resumeGo').addEventListener('click', () => { audio(); state = saved; if(!state.mode) state.mode='table'; r.classList.remove('show'); setTimeout(()=>{ r.hidden=true; }, 600); go(saved.scene); });
+  $('#resumeNew').addEventListener('click', restart);
 }
+/* 劇情中隨時可以從頭開始（按兩下確認） */
+(() => {
+  const b = $('#restartBtn'); let armed = false, tm = null;
+  b.addEventListener('click', e => {
+    e.stopPropagation();
+    if(!armed){ armed = true; b.classList.add('armed'); b.textContent = '再按一次確認'; tm = setTimeout(() => { armed=false; b.classList.remove('armed'); b.textContent='從頭開始'; }, 3500); return; }
+    clearTimeout(tm); restart();
+  });
+})();
 </script>
 
 </body>
